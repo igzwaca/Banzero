@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -19,20 +19,40 @@ export default function App() {
   useEffect(() => {
     const carregarDadosSessao = async () => {
       try {
+        // 🚨 SE QUISER FORÇAR O LOGIN UMA VEZ PARA TESTAR, DESCOMENTE A LINHA ABAIXO:
+        // await AsyncStorage.clear();
+
         const token = await AsyncStorage.getItem("@Banzero:token");
-        setUserToken(token);
+        console.log(">>> TOKEN ENCONTRADO NO APARELHO:", token);
+
+        if (token && token.trim() !== "" && token !== "null" && token !== "undefined") {
+          setUserToken(token);
+        } else {
+          setUserToken(null);
+        }
       } catch (e) {
         console.error("Erro ao carregar token", e);
+        setUserToken(null);
       } finally {
-        setTimeout(() => setIsLoading(false), 2000);
+        // Garante que o splash saia após 2.5s caso o TelaSplash não chame onFinish
+        setTimeout(() => setIsLoading(false), 2500);
       }
     };
 
     carregarDadosSessao();
   }, []);
 
+  const handleLoginSuccess = useCallback((token: string) => {
+    setUserToken(token);
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    await AsyncStorage.multiRemove(["@Banzero:token", "@Banzero:userId", "@Banzero:nome", "@Banzero:foto"]);
+    setUserToken(null);
+  }, []);
+
   if (isLoading) {
-    return <TelaSplash />;
+    return <TelaSplash onFinish={() => setIsLoading(false)} />;
   }
 
   return (
@@ -40,22 +60,24 @@ export default function App() {
       <Stack.Navigator
         screenOptions={{
           headerShown: false,
-          animation: 'fade',
-          animationDuration: 500
+          animation: "fade",
+          animationDuration: 400,
         }}
       >
-        {userToken == null ? (
+        {!userToken ? (
+          // Se NÃO houver token salvo -> Tela de Login
           <>
             <Stack.Screen name="Login">
-              {(props) => <TelaLogin {...props} onLoginSuccess={(token: any) => setUserToken(token)} />}
+              {(props) => <TelaLogin {...props} onLoginSuccess={handleLoginSuccess} />}
             </Stack.Screen>
             <Stack.Screen name="Cadastro" component={TelaCadastro} />
             <Stack.Screen name="Recuperar" component={TelaRecuperar} />
             <Stack.Screen name="Trocar" component={TelaTrocarSenha} />
           </>
         ) : (
+          // Se HOUVER token salvo -> Tela Principal
           <Stack.Screen name="App">
-            {(props) => <TelaApp {...props} onLogout={() => setUserToken(null)} />}
+            {(props) => <TelaApp {...props} onLogout={handleLogout} />}
           </Stack.Screen>
         )}
       </Stack.Navigator>

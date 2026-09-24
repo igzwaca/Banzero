@@ -1,9 +1,9 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { StyleSheet, View, ActivityIndicator, Alert } from "react-native";
 import { WebView } from "react-native-webview";
 import { StatusBar } from "expo-status-bar";
 import * as Location from "expo-location";
-import * as ImagePicker from 'expo-image-picker';
+import * as ImagePicker from "expo-image-picker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ref, update } from "firebase/database";
 import { db } from "../services/Firebase";
@@ -14,20 +14,33 @@ import { MapaHTML } from "../styles/TelaApp";
 const IMGBB_API_KEY = "1004adfd76903eef741f7689abe70fcf";
 const FOTO_DEFAULT = "https://i.ibb.co/99WSv32T/Banzero-1.jpg";
 
+const LOCALIZACAO_PADRAO = {
+  latitude: -3.0756,
+  longitude: -60.0127,
+};
+
+const STORAGE_KEYS = [
+  "@Banzero:userId",
+  "@Banzero:nome",
+  "@Banzero:foto",
+  "@Banzero:tema",
+];
+
 export default function TelaApp({ onLogout }: any) {
   const webViewRef = useRef<WebView>(null);
+  const ultimaListaRef = useRef<string>("");
+
   const [logoAsset, setLogoAsset] = useState<string>("");
-  const [minhaLocation, setMinhaLocation] = useState<any>(null);
+  const [minhaLocation, setMinhaLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [carregandoMapa, setCarregandoMapa] = useState(true);
-  const [ultimaLista, setUltimaLista] = useState<string>("");
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [userData, setUserData] = useState({ id: "", nome: "", fotoUrl: "" });
 
-  const executarJS = (script: string) => {
+  const executarJS = useCallback((script: string) => {
     webViewRef.current?.injectJavaScript(`${script}; true;`);
-  };
+  }, []);
 
-  const transicaoFotoWebView = (url: string) => {
+  const transicaoFotoWebView = useCallback((url: string) => {
     executarJS(`
       (function() {
         const img = document.getElementById('user-photo');
@@ -45,84 +58,109 @@ export default function TelaApp({ onLogout }: any) {
         }
       })()
     `);
-  };
+  }, [executarJS]);
+
+  const injetarNoMapa = useCallback((dados: string) => {
+    // Uso de JSON.stringify evita quebras caso haja aspas simples nos dados (ex: barcos com nomes tipo "D'Água")
+    executarJS(`if (window.atualizarFrota) window.atualizarFrota(${JSON.stringify(dados)})`);
+  }, [executarJS]);
 
   useEffect(() => {
-    const inicializarApp = async () => {
-      try {
-        const [id, nomeCompleto, foto, tema] = await Promise.all([
-          AsyncStorage.getItem("@Banzero:userId"),
-          AsyncStorage.getItem("@Banzero:nome"),
-          AsyncStorage.getItem("@Banzero:foto"),
-          AsyncStorage.getItem("@Banzero:tema")
-        ]);
-
-        const primeiroNome = nomeCompleto?.trim().split(" ")[0] || "Usuário";
-        setUserData({ id: id || "", nome: primeiroNome.toUpperCase(), fotoUrl: foto || FOTO_DEFAULT });
-
-        if (tema === "dark") setIsDarkMode(true);
-
-        const asset = Asset.fromModule(require("../assets/logo.png"));
-        await asset.downloadAsync();
-        setLogoAsset(asset.uri);
-
-        const { status } = await Location.requestForegroundPermissionsAsync();
-
-        if (status === "granted") {
-          let localizacaoFinal = null;
-          let tentativas = 0;
-
-          while (!localizacaoFinal && tentativas < 2) {
-            try {
-              const loc = await Location.getCurrentPositionAsync({
-                accuracy: Location.Accuracy.High,
-              });
-              if (loc?.coords) localizacaoFinal = loc.coords;
-            } catch (e) {
-              tentativas++;
-              if (tentativas < 2) await new Promise(r => setTimeout(r, 800));
-            }
-          }
-
-          if (!localizacaoFinal) {
-            const lastLoc = await Location.getLastKnownPositionAsync({});
-            localizacaoFinal = lastLoc?.coords || aplicarLocalizacaoPadrao;
-          }
-
-          setMinhaLocation(localizacaoFinal);
-        } else {
-          setMinhaLocation(aplicarLocalizacaoPadrao);
-        }
-
-      } catch (error) {
-        setMinhaLocation(aplicarLocalizacaoPadrao);
-      } finally {
-        setCarregandoMapa(false);
-      }
-    };
+    let isMounted = true;
 
     const aplicarLocalizacaoPadrao = () => {
       Alert.alert("Aviso", "GPS não identificado. Reinicie o aplicativo caso queira obter sua localização real.");
-      setMinhaLocation({
-        latitude: -3.0756,
-        longitude: -60.0127,
-      });
+      return LOCALIZACAO_PADRAO;
+    };
+
+    const obterLocalizacao = async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== "granted") {
+          return aplicarLocalizacaoPadrao();
+        }
+
+        let localizacaoFinal = null;
+        let tentativas = 0;
+
+        while (!localizacaoFinal && tentativas < 2) {
+          try {
+            const loc = await Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.High,
+            });
+            if (loc?.coords) localizacaoFinal = loc.coords;
+          } catch {
+            tentativas++;
+            if (tentativas < 2) await new Promise((r) => setTimeout(r, 800));
+          }
+        }
+
+        if (!localizacaoFinal) {
+          const lastLoc = await Location.getLastKnownPositionAsync({});
+          localizacaoFinal = lastLoc?.coords || aplicarLocalizacaoPadrao();
+        }
+
+        return localizacaoFinal;
+      } catch {
+        return aplicarLocalizacaoPadrao();
+      }
+    };
+
+    const carregarLogo = async () => {
+      const asset = Asset.fromModule(require("../assets/logo.png"));
+      await asset.downloadAsync();
+      return asset.uri;
+    };
+
+    const inicializarApp = async () => {
+      try {
+        // Execução concorrente (AsyncStorage em batch, Asset e GPS ao mesmo tempo)
+        const [storageData, logoUri, coords] = await Promise.all([
+          AsyncStorage.multiGet(STORAGE_KEYS),
+          carregarLogo(),
+          obterLocalizacao(),
+        ]);
+
+        if (!isMounted) return;
+
+        const storageMap = Object.fromEntries(storageData);
+        const nomeCompleto = storageMap["@Banzero:nome"];
+        const primeiroNome = nomeCompleto?.trim().split(" ")[0] || "Usuário";
+
+        setUserData({
+          id: storageMap["@Banzero:userId"] || "",
+          nome: primeiroNome.toUpperCase(),
+          fotoUrl: storageMap["@Banzero:foto"] || FOTO_DEFAULT,
+        });
+
+        if (storageMap["@Banzero:tema"] === "dark") {
+          setIsDarkMode(true);
+        }
+
+        setLogoAsset(logoUri);
+        setMinhaLocation(coords);
+      } catch (error) {
+        if (isMounted) {
+          setMinhaLocation(aplicarLocalizacaoPadrao());
+        }
+      } finally {
+        if (isMounted) setCarregandoMapa(false);
+      }
     };
 
     inicializarApp();
 
     const unsub = monitorarTodasEmbarcacoes((lista) => {
       const dados = JSON.stringify(lista);
-      setUltimaLista(dados);
+      ultimaListaRef.current = dados;
       injetarNoMapa(dados);
     });
 
-    return () => unsub();
-  }, []);
-
-  const injetarNoMapa = (dados: string) => {
-    executarJS(`if (window.atualizarFrota) window.atualizarFrota('${dados}')`);
-  };
+    return () => {
+      isMounted = false;
+      unsub();
+    };
+  }, [injetarNoMapa]);
 
   const gerenciarFotoPerfil = () => {
     if (!userData.id) return;
@@ -144,7 +182,7 @@ export default function TelaApp({ onLogout }: any) {
       quality: 0.5,
     });
 
-    if (result.canceled) return;
+    if (result.canceled || !result.assets?.[0]?.uri) return;
 
     try {
       const formData = new FormData();
@@ -160,14 +198,16 @@ export default function TelaApp({ onLogout }: any) {
       });
 
       const resJson = await response.json();
-      const novaUrl = resJson.data.url;
+      const novaUrl = resJson?.data?.url;
+
+      if (!novaUrl) throw new Error("URL não retornada");
 
       await Promise.all([
         update(ref(db, `Usuarios/${userData.id}`), { fotoUrl: novaUrl }),
-        AsyncStorage.setItem("@Banzero:foto", novaUrl)
+        AsyncStorage.setItem("@Banzero:foto", novaUrl),
       ]);
 
-      setUserData(prev => ({ ...prev, fotoUrl: novaUrl }));
+      setUserData((prev) => ({ ...prev, fotoUrl: novaUrl }));
       transicaoFotoWebView(novaUrl);
     } catch (error) {
       Alert.alert("Erro", "Falha ao enviar.");
@@ -182,9 +222,9 @@ export default function TelaApp({ onLogout }: any) {
     try {
       await Promise.all([
         update(ref(db, `Usuarios/${userData.id}`), { fotoUrl: "" }),
-        AsyncStorage.removeItem("@Banzero:foto")
+        AsyncStorage.removeItem("@Banzero:foto"),
       ]);
-      setUserData(prev => ({ ...prev, fotoUrl: FOTO_DEFAULT }));
+      setUserData((prev) => ({ ...prev, fotoUrl: FOTO_DEFAULT }));
       transicaoFotoWebView(FOTO_DEFAULT);
     } catch (error) {
       Alert.alert("Erro", "Falha ao remover.");
@@ -198,12 +238,27 @@ export default function TelaApp({ onLogout }: any) {
         text: "Sair",
         style: "destructive",
         onPress: async () => {
-          await AsyncStorage.multiRemove(["@Banzero:token", "@Banzero:userId", "@Banzero:nome", "@Banzero:foto"]);
+          await AsyncStorage.multiRemove(STORAGE_KEYS);
           onLogout();
-        }
-      }
+        },
+      },
     ]);
   };
+
+  // Memoiza a fonte HTML para evitar recarregar/flicker da WebView a cada render
+  const webViewSource = useMemo(() => {
+    if (!minhaLocation || !logoAsset) return undefined;
+    return {
+      html: MapaHTML(
+        minhaLocation.latitude,
+        minhaLocation.longitude,
+        logoAsset,
+        userData.nome,
+        userData.fotoUrl,
+        isDarkMode
+      ),
+    };
+  }, [minhaLocation, logoAsset, userData.nome, userData.fotoUrl, isDarkMode]);
 
   if (carregandoMapa || !minhaLocation || !logoAsset) {
     return (
@@ -219,23 +274,22 @@ export default function TelaApp({ onLogout }: any) {
       <WebView
         ref={webViewRef}
         originWhitelist={["*"]}
-        source={{
-          html: MapaHTML(
-            minhaLocation.latitude,
-            minhaLocation.longitude,
-            logoAsset,
-            userData.nome,
-            userData.fotoUrl,
-            isDarkMode
-          ),
-        }}
+        source={webViewSource}
         style={styles.map}
-        onLoadEnd={() => ultimaLista && injetarNoMapa(ultimaLista)}
+        onLoadEnd={() => {
+          if (ultimaListaRef.current) {
+            injetarNoMapa(ultimaListaRef.current);
+          }
+        }}
         onMessage={(event) => {
           const msg = event.nativeEvent.data;
           switch (msg) {
-            case "logout": handleLogout(); break;
-            case "trocarFoto": gerenciarFotoPerfil(); break;
+            case "logout":
+              handleLogout();
+              break;
+            case "trocarFoto":
+              gerenciarFotoPerfil();
+              break;
             case "temaEscuro":
               setIsDarkMode(true);
               AsyncStorage.setItem("@Banzero:tema", "dark");

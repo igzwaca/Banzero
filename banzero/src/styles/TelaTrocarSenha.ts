@@ -1,9 +1,30 @@
-import { StyleSheet } from "react-native";
+import { StyleSheet, ViewStyle, TextStyle } from "react-native";
+
+// Centralização de tokens de design para consistência com o restante do aplicativo
+const COLORS = {
+    primary: '#5e3003',
+    background: '#FFDEAD',
+    inputBackground: '#FFF5E6',
+    border: '#a0512da9',
+    buttonBorder: '#eedfd89e',
+    white: '#FFFFFF',
+    shadowDark: '#000000',
+} as const;
+
+// Estilo base compartilhado entre inputs de texto e container de senha
+const baseInputStyle: ViewStyle = {
+    height: 50,
+    borderRadius: 10,
+    backgroundColor: COLORS.inputBackground,
+    paddingHorizontal: 12,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+};
 
 export const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#FFDEAD',
+        backgroundColor: COLORS.background,
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -21,11 +42,11 @@ export const styles = StyleSheet.create({
 
     formContainer: {
         width: '88%',
-        backgroundColor: '#FFDEAD',
+        backgroundColor: COLORS.background,
         padding: 22,
         borderRadius: 12,
         elevation: 5,
-        shadowColor: '#5e3003',
+        shadowColor: COLORS.primary,
         shadowOpacity: 0.15,
         shadowRadius: 10,
         shadowOffset: { width: 0, height: 5 },
@@ -34,7 +55,7 @@ export const styles = StyleSheet.create({
     loginTitle: {
         fontSize: 22,
         fontWeight: 'bold',
-        color: '#5e3003',
+        color: COLORS.primary,
         marginBottom: 20,
         textAlign: 'center',
     },
@@ -45,36 +66,27 @@ export const styles = StyleSheet.create({
     },
 
     inputsNomeEmail: {
-        height: 50,
+        ...baseInputStyle,
         fontSize: 14,
-        color: '#5e3003',
-        paddingHorizontal: 12,
-        borderRadius: 10,
-        backgroundColor: '#FFF5E6',
-        borderWidth: 1.5,
-        borderColor: '#a0512da9',
-    },
+        color: COLORS.primary,
+    } as TextStyle,
 
     passwordContainer: {
+        ...baseInputStyle,
         flexDirection: 'row',
         alignItems: 'center',
-        height: 50,
-        borderRadius: 10,
-        backgroundColor: '#FFF5E6',
-        paddingHorizontal: 12,
-        borderWidth: 1.5,
-        borderColor: '#a0512da9',
     },
 
     inputSenha: {
         flex: 1,
         height: '100%',
         fontSize: 14,
-        color: '#5e3003',
+        color: COLORS.primary,
+        paddingVertical: 0, // Previne corte ou desalinhamento dos caracteres no Android
     },
 
     buttonEntrar: {
-        backgroundColor: '#5e3003',
+        backgroundColor: COLORS.primary,
         width: '100%',
         height: 50,
         borderRadius: 12,
@@ -82,15 +94,16 @@ export const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         elevation: 4,
-        shadowColor: '#000',
+        shadowColor: COLORS.shadowDark,
+        shadowOffset: { width: 0, height: 2 }, // Alinha a renderização da sombra do iOS com o elevation do Android
         shadowOpacity: 0.2,
         shadowRadius: 4,
         borderWidth: 1.5,
-        borderColor: '#eedfd89e',
+        borderColor: COLORS.buttonBorder,
     },
 
     buttonText: {
-        color: '#FFF',
+        color: COLORS.white,
         fontSize: 16,
         fontWeight: 'bold',
     },

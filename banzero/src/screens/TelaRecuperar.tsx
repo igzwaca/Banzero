@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import {
     SafeAreaView,
@@ -15,9 +15,25 @@ import { ref, get, set, query, orderByChild, equalTo } from "firebase/database";
 import { db } from "../services/Firebase";
 import emailjs from 'emailjs-com';
 
+// Centralização de constantes fora do ciclo de renderização
+const EMAILJS_CONFIG = {
+    SERVICE_ID: 'service_qvq4inr',
+    TEMPLATE_ID: 'template_sgb73ot',
+    PUBLIC_KEY: 'NjOwSMElhQFUf380u',
+};
+
+const TEMPO_EXPIRACAO_CODIGO_MS = 5 * 60 * 1000; // 5 minutos (300.000 ms)
+
 export default function RecuperarScreen({ navigation }: any) {
     const [email, setEmail] = useState("");
     const [carregando, setCarregando] = useState(false);
+    const isMountedRef = useRef(true);
+
+    useEffect(() => {
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, []);
 
     const enviarCodigo = async () => {
         const emailFormatado = email.trim().toLowerCase();
@@ -36,43 +52,53 @@ export default function RecuperarScreen({ navigation }: any) {
 
             if (!snapshot.exists()) {
                 Alert.alert("Aviso", "Este e-mail não foi encontrado em nossa base.");
-                setCarregando(false);
-                return;
+                return; // O bloco finally já executa setCarregando(false)
             }
 
             const dados = snapshot.val();
             const userId = Object.keys(dados)[0];
-            const nomeUsuario = dados[userId].nome;
+            const nomeUsuario = dados[userId]?.nome || "Usuário";
 
             const codigo = Math.floor(100000 + Math.random() * 900000);
             const emailKey = emailFormatado.replace(/\./g, "_");
 
-            await set(ref(db, "codigos/" + emailKey), {
+            // Grava o código temporário no Firebase
+            await set(ref(db, `codigos/${emailKey}`), {
                 codigo: codigo,
-                expira: Date.now() + 300000
+                expira: Date.now() + TEMPO_EXPIRACAO_CODIGO_MS
             });
 
+            // Dispara o e-mail via EmailJS
             await emailjs.send(
-                'service_qvq4inr',
-                'template_sgb73ot',
+                EMAILJS_CONFIG.SERVICE_ID,
+                EMAILJS_CONFIG.TEMPLATE_ID,
                 {
                     user_name: nomeUsuario,
                     email: emailFormatado,
                     codigo: codigo
                 },
-                'NjOwSMElhQFUf380u'
+                EMAILJS_CONFIG.PUBLIC_KEY
             );
 
-            Alert.alert(
-                "Sucesso",
-                "Código de recuperação enviado para o seu e-mail!",
-                [{ text: "Entendido", onPress: () => navigation.replace("Trocar", { email: emailFormatado }) }]
-            );
+            if (isMountedRef.current) {
+                Alert.alert(
+                    "Sucesso",
+                    "Código de recuperação enviado para o seu e-mail!",
+                    [{ 
+                        text: "Entendido", 
+                        onPress: () => navigation.replace("Trocar", { email: emailFormatado }) 
+                    }]
+                );
+            }
 
         } catch (error: any) {
-            Alert.alert("Erro", "Falha ao enviar o código de recuperação: " + error.message);
+            if (isMountedRef.current) {
+                Alert.alert("Erro", "Falha ao enviar o código de recuperação: " + (error?.message || ""));
+            }
         } finally {
-            setCarregando(false);
+            if (isMountedRef.current) {
+                setCarregando(false);
+            }
         }
     };
 
@@ -98,6 +124,11 @@ export default function RecuperarScreen({ navigation }: any) {
                         placeholderTextColor="#000"
                         keyboardType="email-address"
                         autoCapitalize="none"
+                        autoCorrect={false}
+                        autoComplete="email"
+                        textContentType="emailAddress"
+                        returnKeyType="done"
+                        onSubmitEditing={enviarCodigo}
                         value={email}
                         onChangeText={setEmail}
                     />
@@ -107,6 +138,7 @@ export default function RecuperarScreen({ navigation }: any) {
                     style={[styles.buttonEntrar, carregando && { opacity: 0.7 }]}
                     onPress={enviarCodigo}
                     disabled={carregando}
+                    activeOpacity={0.8}
                 >
                     {carregando ? (
                         <ActivityIndicator color="#FFF" />
@@ -118,6 +150,7 @@ export default function RecuperarScreen({ navigation }: any) {
                 <TouchableOpacity
                     style={styles.backButton}
                     onPress={() => navigation.goBack()}
+                    activeOpacity={0.6}
                 >
                     <Text style={styles.backButtonText}>Voltar para o Login</Text>
                 </TouchableOpacity>

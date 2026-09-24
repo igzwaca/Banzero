@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -22,6 +22,19 @@ export default function LoginScreen({ navigation, onLoginSuccess }: any) {
     const [senha, setSenha] = useState("");
     const [carregando, setCarregando] = useState(false);
 
+    const senhaInputRef = useRef<TextInput>(null);
+    const isMountedRef = useRef(true);
+
+    useEffect(() => {
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, []);
+
+    const toggleVerSenha = useCallback(() => {
+        setVerSenha(prev => !prev);
+    }, []);
+
     const login = async () => {
         const emailFormatado = email.trim().toLowerCase();
 
@@ -43,13 +56,15 @@ export default function LoginScreen({ navigation, onLoginSuccess }: any) {
                 const usuarioDB = dadosFirebase[userId];   
 
                 if (usuarioDB.senha === senha) {
-                    await AsyncStorage.setItem("@Banzero:token", userId);
-                    await AsyncStorage.setItem("@Banzero:userId", userId);
-                    await AsyncStorage.setItem("@Banzero:nome", usuarioDB.nome || "Usuário");
-                    await AsyncStorage.setItem("@Banzero:foto", usuarioDB.fotoUrl || "");
+                    // Gravação atômica em lote (1 única chamada nativa em vez de 4 separadas)
+                    await AsyncStorage.multiSet([
+                        ["@Banzero:token", userId],
+                        ["@Banzero:userId", userId],
+                        ["@Banzero:nome", usuarioDB.nome || "Usuário"],
+                        ["@Banzero:foto", usuarioDB.fotoUrl || ""]
+                    ]);
 
                     onLoginSuccess(userId);
-
                 } else {
                     Alert.alert("Erro", "Senha incorreta");
                 }
@@ -60,7 +75,9 @@ export default function LoginScreen({ navigation, onLoginSuccess }: any) {
             console.error(error);
             Alert.alert("Erro de Conexão", "Não foi possível conectar ao servidor.");
         } finally {
-            setCarregando(false);
+            if (isMountedRef.current) {
+                setCarregando(false);
+            }
         }
     };
 
@@ -86,6 +103,11 @@ export default function LoginScreen({ navigation, onLoginSuccess }: any) {
                         placeholderTextColor="#000"
                         keyboardType="email-address"
                         autoCapitalize="none"
+                        autoCorrect={false}
+                        autoComplete="email"
+                        textContentType="emailAddress"
+                        returnKeyType="next"
+                        onSubmitEditing={() => senhaInputRef.current?.focus()}
                         value={email}
                         onChangeText={setEmail}
                     />
@@ -94,14 +116,24 @@ export default function LoginScreen({ navigation, onLoginSuccess }: any) {
                 <View style={styles.inputEspacamento}>
                     <View style={styles.passwordContainer}>
                         <TextInput
+                            ref={senhaInputRef}
                             style={styles.inputSenha}
                             placeholder="SENHA"
                             placeholderTextColor="#000"
                             secureTextEntry={!verSenha}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            autoComplete="password"
+                            textContentType="password"
+                            returnKeyType="done"
+                            onSubmitEditing={login}
                             value={senha}
                             onChangeText={setSenha}
                         />
-                        <TouchableOpacity onPress={() => setVerSenha(!verSenha)}>
+                        <TouchableOpacity 
+                            onPress={toggleVerSenha}
+                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        >
                             <Ionicons
                                 name={verSenha ? "eye-outline" : "eye-off-outline"}
                                 size={24}
@@ -122,6 +154,7 @@ export default function LoginScreen({ navigation, onLoginSuccess }: any) {
                     style={[styles.buttonEntrar, carregando && { opacity: 0.7 }]}
                     onPress={login}
                     disabled={carregando}
+                    activeOpacity={0.8}
                 >
                     {carregando ? (
                         <ActivityIndicator color="#FFF" />
